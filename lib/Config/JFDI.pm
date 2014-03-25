@@ -4,7 +4,7 @@ package Config::JFDI;
 use warnings;
 use strict;
 
-=head1 SYNPOSIS 
+=head1 SYNPOSIS
 
     use Config::JFDI;
 
@@ -24,7 +24,7 @@ You can also specify a file directly:
     my $config = Config::JFDI->new(file => "/path/to/my/application/my_application.cnf");
 
 To later reload your configuration, fresh from disk:
-    
+
     $config->reload;
 
 =head1 DESCRIPTION
@@ -79,6 +79,9 @@ If you *do* want the original behavior, simply pass in the file parameter as the
 
 use Any::Moose;
 
+use lib '../Config-Loader/lib';
+use Config::Loader;
+
 use Config::JFDI::Source::Loader;
 use Config::JFDI::Carp;
 
@@ -91,7 +94,24 @@ use Clone qw//;
 
 has package => qw/ is ro isa Str /;
 
-has source => qw/ is ro /, handles => [qw/ driver local_suffix no_env env_lookup path found /];
+has source => (
+    is => 'ro',
+    lazy_build => 1,
+    clearer => 'clear_source',
+    predicate => 'has_source',
+    builder => sub {
+
+        my $self = shift;
+
+        return Config::Loader->new_source
+            ( "Files",
+              default => $self->default,
+              files => [ $self->_find_files ],
+          );
+
+      },
+);
+# has source => qw/ is ro /, handles => [qw/ driver local_suffix no_env env_lookup path found /];
 
 has load_once => qw/ is ro required 1 /, default => 1;
 
@@ -107,13 +127,12 @@ sub _build_default {
     return {};
 }
 
-has path_to => qw/ reader _path_to lazy_build 1 isa Str /;
-sub _build_path_to {
-    my $self = shift;
-    return $self->config->{home} if $self->config->{home};
-    return $self->source->path unless $self->source->path_is_file;
-    return '.';
-}
+has path_to => qw/ reader _path_to lazy_build 1 isa Str /,
+   builder => sub { $_[0]->config->{home} ||
+                   !$_[0]->source->path_is_file && $_[0]->source->path ||
+                    "."
+                },
+;
 
 has _config => qw/ is rw isa HashRef /;
 
@@ -121,7 +140,7 @@ has _config => qw/ is rw isa HashRef /;
 
 You can configure the $config object by passing the following to new:
 
-    name                The name specifying the prefix of the configuration file to look for and 
+    name                The name specifying the prefix of the configuration file to look for and
                         the ENV variable to read. This can be a package name. In any case,
                         :: will be substituted with _ in <name> and the result will be lowercased.
 
@@ -145,7 +164,7 @@ You can configure the $config object by passing the following to new:
                         to Config::Any
 
     install_accessor    Set this to 1 to install a Catalyst-style accessor as <name>::config
-                        You can also specify the package name directly by setting install_accessor to it 
+                        You can also specify the package name directly by setting install_accessor to it
                         (e.g. install_accessor => "My::Application")
 
     substitute          A hash consisting of subroutines called during the substitution phase of configuration
@@ -162,6 +181,65 @@ Returns a new Config::JFDI object
 =cut
 
 sub BUILD {
+    my $self = shift;
+    my $given = shift;
+
+    $self->{package} = $given->{name} if defined $given->{name} && ! defined $self->{package} && ! ref $given->{name};
+
+    if (defined( my $name = $self->name )) {
+        if (ref $name eq "SCALAR") {
+            $name = $$name;
+        }
+        else {
+            $name =~ s/::/_/g;
+            $name = lc $name;
+        }
+        $self->{name} = $name;
+    }
+
+    if ($given->{file}) {
+
+        $self->{path_is_file} = 1;
+        $self->{path} = $given->{file};
+
+        if ( exists $given->{local_suffix} ) {
+            warn "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead"
+        }
+
+    }
+
+    if (defined $self->env_lookup) {
+        $self->{env_lookup} = [ $self->env_lookup ] unless ref $self->env_lookup eq "ARRAY";
+    }
+
+    $self->{local_suffix} = $given->{config_local_suffix}
+        if $given->{config_local_suffix} and not exists $given->{local_suffix};
+
+    carp "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead" if
+        exists $given->{local_suffix} && exists $given->{file};
+
+}
+sub sources_BUILD {
+    my $self = shift;
+    my $given = shift;
+
+    # if (defined( my $name = $self->name )) {
+    #     if (ref $name eq "SCALAR") {
+    #         $name = $$name;
+    #     }
+    #     else {
+    #         $name =~ s/::/_/g;
+    #         $name = lc $name;
+    #     }
+    #     $self->{name} = $name;
+    # }
+
+    # if (defined $self->env_lookup) {
+    #     $self->{env_lookup} = [ $self->env_lookup ] unless ref $self->env_lookup eq "ARRAY";
+    # }
+
+}
+sub old_BUILD {
     my $self = shift;
     my $given = shift;
 
@@ -260,19 +338,18 @@ If the list is empty, then no files were loaded/read
 =cut
 
 sub open {
-    if ( ! ref $_[0] ) {
+    unless ( ref $_[0] ) {
         my $class = shift;
-        return $class->new( no_06_warning => 1, 1 == @_ ? (file => $_[0]) : @_ )->open;
+        return $class->new( @_ == 1 ? (file => $_[0]) : @_ )->open;
     }
     my $self = shift;
     carp "You called ->open on an instantiated object with arguments" if @_;
     return unless $self->found;
-    return wantarray ? ($self->get, $self) : $self->get;
+    return wantarray ? ($self->config, $self) : $self->config;
 }
 
 sub get {
     my $self = shift;
-
     my $config = $self->config;
     return $config;
     # TODO Expand to allow dotted key access (?)
@@ -280,12 +357,17 @@ sub get {
 
 sub config {
     my $self = shift;
-
     return $self->_config if $self->loaded;
     return $self->load;
 }
 
 sub load {
+    my $self = shift;
+    return $self->_config if $self->has_source && $self->load_once;
+    $self->_config( $self->source->load_config );
+    return $self->_config;
+}
+sub old_load {
     my $self = shift;
 
     if ($self->loaded && $self->load_once) {
@@ -335,11 +417,16 @@ Reload the configuration, examining ENV and scanning the path anew
 
 Returns a hash of the configuration
 
-=cut 
+=cut
 
-sub reload {
+sub old_reload {
     my $self = shift;
     $self->{loaded} = 0;
+    return $self->load;
+}
+sub reload {
+    my $self = shift;
+    $self->clear_source;
     return $self->load;
 }
 
@@ -404,6 +491,157 @@ sub _load {
 
     $self->{_config} = Hash::Merge::Simple->merge($self->_config, $hash);
 }
+
+## From ::Loader:
+has name => qw/ is ro required 0 isa Str|ScalarRef /;
+has path_is_file => qw/ is ro default 0 /;
+has path => qw/ is ro default . /;
+has no_env => qw/ is ro required 1 /, default => 0;
+has no_local => qw/ is ro required 1 /, default => 0;
+has local_suffix => qw/ is ro required 1 lazy 1 default local /;
+has env_lookup => qw/ is ro /, default => sub { [] };
+has _found => qw/ is rw isa ArrayRef /;
+has driver => qw/ is ro lazy_build 1 /,
+    builder => sub { {} };
+sub _build_driver {
+    return {};
+}
+sub _env (@) {
+    my $key = uc join "_", @_;
+    $key =~ s/::/_/g;
+    $key =~ s/\W/_/g;
+    return $ENV{$key};
+}
+sub file_extension ($) {
+    my $path = shift;
+    return if -d $path;
+    my ($extension) = $path =~ m{\.([^/\.]{1,4})$};
+    return $extension;
+}
+sub _get_path {
+    my $self = shift;
+
+    my $name = $self->name;
+    my $path;
+#    $path = _env($name, 'CONFIG') if $name && ! $self->no_env;
+    $path = $self->_env_lookup('CONFIG') unless $self->no_env;
+    $path ||= $self->path;
+
+    my $extension = file_extension $path;
+
+    if (-d $path) {
+        $path =~ s{[\/\\]$}{}; # Remove any trailing slash, e.g. apple/ or apple\ => apple
+        $path .= "/$name"; # Look for a file in path with $self->name, e.g. apple => apple/name
+    }
+
+    return ($path, $extension);
+}
+sub _env_lookup {
+    my $self = shift;
+    my @suffix = @_;
+
+    my $name = $self->name;
+    my $env_lookup = $self->env_lookup;
+    my @lookup;
+    push @lookup, $name if $name;
+    push @lookup, @$env_lookup;
+
+    for my $prefix (@lookup) {
+        my $value = _env($prefix, @suffix);
+        return $value if defined $value;
+    }
+
+    return;
+}
+sub _get_local_suffix {
+    my $self = shift;
+
+    my $name = $self->name;
+    my $suffix;
+    $suffix = $self->_env_lookup('CONFIG_LOCAL_SUFFIX') unless $self->no_env;
+#    $suffix = _env($self->name, 'CONFIG_LOCAL_SUFFIX') if $name && ! $self->no_env;
+    $suffix ||= $self->local_suffix;
+
+    return $suffix;
+}
+sub _get_extensions {
+    return @{ Config::Any->extensions }
+}
+sub _find_files { # Doesn't really find files...hurm...
+    my $self = shift;
+
+    if ($self->path_is_file) {
+        my $path;
+        $path = $self->_env_lookup('CONFIG') unless $self->no_env;
+        $path ||= $self->path;
+        return ($path);
+    }
+    else {
+        my ($path, $extension) = $self->_get_path;
+        my $local_suffix = $self->_get_local_suffix;
+        my @extensions = $self->_get_extensions;
+        my $no_local = $self->no_local;
+
+        my @files;
+        if ($extension) {
+            croak "Can't handle file extension $extension" unless grep { $_ eq $extension } @extensions;
+            push @files, $path;
+            unless ($no_local) {
+                (my $local_path = $path) =~ s{\.$extension$}{_$local_suffix.$extension};
+                push @files, $local_path;
+            }
+        }
+        else {
+            push @files, map { "$path.$_" } @extensions;
+            push @files, map { "${path}_${local_suffix}.$_" } @extensions unless $no_local;
+        }
+
+        my (@cfg, @local_cfg);
+        for (sort @files) {
+
+            if (m{$local_suffix\.}ms) {
+                push @local_cfg, $_;
+            } else {
+                push @cfg, $_;
+            }
+
+        }
+
+        my @final_files = $no_local ?
+            @cfg : (@cfg, @local_cfg);
+
+        @final_files = grep -r, @final_files;
+
+        return @final_files;
+
+    }
+}
+
+## The rest
+sub found {
+    my $self = shift;
+    die if @_;
+    return unless $self->has_source;
+    return ( map { $_->[1]{file} } @{ $self->source->sources } );
+}
+around found => sub {
+    my $inner = shift;
+    my $self = shift;
+
+    $self->read unless $self->{_found};
+
+    return $inner->( $self, @_ );
+};
+sub _load_files {
+    my $self = shift;
+    my $files = shift;
+    return Config::Any->load_files({
+        files => $files,
+        use_ext => 1,
+        driver_args => $self->driver,
+    });
+}
+
 
 =head1 SEE ALSO
 
