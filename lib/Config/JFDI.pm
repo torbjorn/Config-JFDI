@@ -115,28 +115,39 @@ has source => (
 
       },
 );
-# has source => qw/ is ro /, handles => [qw/ driver local_suffix no_env env_lookup path found /];
 
 has load_once => qw/ is ro required 1 /, default => 1;
 
-has substitution => qw/ reader _substitution lazy_build 1 isa HashRef /;
-sub _build_substitution {
-    return {};
-}
-
-has default => qw/ is ro lazy_build 1 isa HashRef /;
-sub _build_default {
-    return {};
-}
+has substitution => qw/ reader _substitution lazy_build 1 isa HashRef /,
+    builder => sub {
+        return {};
+    }
+;
 
 has path_to => qw/ reader _path_to lazy_build 1 isa Str /,
    builder => sub { $_[0]->config->{home} ||
                    !$_[0]->path_is_file && $_[0]->path ||
                     "."
-                },
+                }
 ;
 
 has _config => qw/ is rw isa HashRef /;
+
+## From ::Loader:
+has name => qw/ is ro required 0 isa Str|ScalarRef /;
+has path_is_file => qw/ is ro default 0 /;
+has path => qw/ is ro default . /;
+has no_env => qw/ is ro required 1 /, default => 0;
+has no_local => qw/ is ro required 1 /, default => 0;
+has local_suffix => qw/ is ro required 1 lazy 1 default local /;
+has env_lookup => qw/ is ro /, default => sub { [] };
+has _found => qw/ is rw isa ArrayRef /;
+has driver => qw/ is ro lazy_build 1 /,
+    builder => sub { {} };
+has default => (
+   is => 'ro',
+   default => sub { {} },
+);
 
 =head2 $config = Config::JFDI->new(...)
 
@@ -186,7 +197,8 @@ sub BUILD {
     my $self = shift;
     my $given = shift;
 
-    $self->{package} = $given->{name} if defined $given->{name} && ! defined $self->{package} && ! ref $given->{name};
+    $self->{package} = $given->{name} if defined $given->{name} &&
+        !defined $self->{package} && ! ref $given->{name};
 
     if (defined( my $name = $self->name )) {
         if (ref $name eq "SCALAR") {
@@ -217,12 +229,7 @@ sub BUILD {
     $self->{local_suffix} = $given->{config_local_suffix}
         if $given->{config_local_suffix} and not exists $given->{local_suffix};
 
-    for (qw/substitute substitutes substitutions substitution/) {
-        if ($given->{$_}) {
-            $self->{substitution} = $given->{$_};
-            last;
-        }
-    }
+    ($self->{substitution}) = grep $_, @{$given}{qw/substitute substitutes substitutions substitution/};
 
     if (my $package = $given->{install_accessor}) {
         $package = $self->package if $package eq 1;
@@ -236,90 +243,6 @@ sub BUILD {
 
     }
 
-
-}
-sub sources_BUILD {
-    my $self = shift;
-    my $given = shift;
-
-    # if (defined( my $name = $self->name )) {
-    #     if (ref $name eq "SCALAR") {
-    #         $name = $$name;
-    #     }
-    #     else {
-    #         $name =~ s/::/_/g;
-    #         $name = lc $name;
-    #     }
-    #     $self->{name} = $name;
-    # }
-
-    # if (defined $self->env_lookup) {
-    #     $self->{env_lookup} = [ $self->env_lookup ] unless ref $self->env_lookup eq "ARRAY";
-    # }
-
-}
-sub old_BUILD {
-    my $self = shift;
-    my $given = shift;
-
-    $self->{package} = $given->{name} if defined $given->{name} && ! defined $self->{package} && ! ref $given->{name};
-
-    my ($source, %source);
-    if ($given->{file}) {
-
-        if ( 0 ) { # Deprecate the deprecation warning
-            carp "The behavior of the 'file' option has changed, pass in 'quiet_deprecation' or 'no_06_warning' to disable this warning"
-                unless $given->{quiet_deprecation} || $given->{no_06_warning};
-            carp "Warning, overriding path setting with file (\"$given->{file}\" instead of \"$given->{path}\")" if $given->{path};
-        }
-        $given->{path} = $given->{file};
-        $source{path_is_file} = 1;
-    }
-
-    {
-        for (qw/
-            name
-            path
-            driver
-
-            no_local
-            local_suffix
-
-            no_env
-            env_lookup
-
-        /) {
-            $source{$_} = $given->{$_} if exists $given->{$_};
-        }
-
-        carp "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead" if
-            exists $source{local_suffix} && exists $given->{file};
-
-        $source{local_suffix} = $given->{config_local_suffix} if $given->{config_local_suffix};
-
-        $source = Config::JFDI::Source::Loader->new( %source );
-    }
-
-    $self->{source} = $source;
-
-    for (qw/substitute substitutes substitutions substitution/) {
-        if ($given->{$_}) {
-            $self->{substitution} = $given->{$_};
-            last;
-        }
-    }
-
-    if (my $package = $given->{install_accessor}) {
-        $package = $self->package if $package eq 1;
-        Sub::Install::install_sub({
-            code => sub {
-                return $self->config;
-            },
-            into => $package,
-            as => "config"
-        });
-
-    }
 }
 
 =head2 $config_hash = Config::JFDI->open( ... )
@@ -384,37 +307,6 @@ sub load {
     return $self->_config if $self->has_source && $self->load_once;
     $self->_config( $self->load_config );
 
-
-    {
-        my $visitor = Data::Visitor::Callback->new(
-            plain_value => sub {
-                return unless defined $_;
-                $self->substitute($_);
-            }
-        );
-        $visitor->visit( $self->config );
-
-    }
-
-    return $self->config;
-}
-sub old_load {
-    my $self = shift;
-
-    if ($self->loaded && $self->load_once) {
-        return $self->get;
-    }
-
-    $self->_config($self->default);
-
-    {
-        my @read = $self->source->read;
-
-        $self->_load($_) for @read;
-    }
-
-    $self->{loaded} = 1;
-
     {
         my $visitor = Data::Visitor::Callback->new(
             plain_value => sub {
@@ -450,11 +342,6 @@ Returns a hash of the configuration
 
 =cut
 
-sub old_reload {
-    my $self = shift;
-    $self->{loaded} = 0;
-    return $self->load;
-}
 sub reload {
     my $self = shift;
     $self->clear_source;
@@ -506,6 +393,7 @@ sub path_to {
     my $path_to = $self->_path_to;
 
     my $path = Path::Class::Dir->new( $path_to, @path );
+
     if ( -d $path ) {
         return $path;
     }
@@ -514,20 +402,7 @@ sub path_to {
     }
 }
 
-## From ::Loader:
-has name => qw/ is ro required 0 isa Str|ScalarRef /;
-has path_is_file => qw/ is ro default 0 /;
-has path => qw/ is ro default . /;
-has no_env => qw/ is ro required 1 /, default => 0;
-has no_local => qw/ is ro required 1 /, default => 0;
-has local_suffix => qw/ is ro required 1 lazy 1 default local /;
-has env_lookup => qw/ is ro /, default => sub { [] };
-has _found => qw/ is rw isa ArrayRef /;
-has driver => qw/ is ro lazy_build 1 /,
-    builder => sub { {} };
-sub _build_driver {
-    return {};
-}
+
 sub _env (@) {
     my $key = uc join "_", @_;
     $key =~ s/::/_/g;
