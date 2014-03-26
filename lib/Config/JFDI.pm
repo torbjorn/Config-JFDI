@@ -99,6 +99,7 @@ has source => (
     lazy_build => 1,
     clearer => 'clear_source',
     predicate => 'has_source',
+    handles => [qw/load_config sources files_loaded/],
     builder => sub {
 
         my $self = shift;
@@ -107,6 +108,10 @@ has source => (
             ( "Files",
               default => $self->default,
               files => [ $self->_find_files ],
+              load_args => {
+                  use_ext => 1,
+                  driver_args => $self->driver,
+              }
           );
 
       },
@@ -114,8 +119,6 @@ has source => (
 # has source => qw/ is ro /, handles => [qw/ driver local_suffix no_env env_lookup path found /];
 
 has load_once => qw/ is ro required 1 /, default => 1;
-
-has loaded => qw/ is ro required 1 /, default => 0;
 
 has substitution => qw/ reader _substitution lazy_build 1 isa HashRef /;
 sub _build_substitution {
@@ -217,6 +220,26 @@ sub BUILD {
 
     carp "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead" if
         exists $given->{local_suffix} && exists $given->{file};
+
+    for (qw/substitute substitutes substitutions substitution/) {
+        if ($given->{$_}) {
+            $self->{substitution} = $given->{$_};
+            last;
+        }
+    }
+
+    if (my $package = $given->{install_accessor}) {
+        $package = $self->package if $package eq 1;
+        Sub::Install::install_sub({
+            code => sub {
+                return $self->config;
+            },
+            into => $package,
+            as => "config"
+        });
+
+    }
+
 
 }
 sub sources_BUILD {
@@ -350,22 +373,34 @@ sub open {
 
 sub get {
     my $self = shift;
-    my $config = $self->config;
-    return $config;
+    return = $self->config;
     # TODO Expand to allow dotted key access (?)
 }
 
 sub config {
     my $self = shift;
-    return $self->_config if $self->loaded;
+    return $self->_config if $self->has_source;
     return $self->load;
 }
 
 sub load {
     my $self = shift;
     return $self->_config if $self->has_source && $self->load_once;
-    $self->_config( $self->source->load_config );
-    return $self->_config;
+    $self->_config( $self->load_config );
+
+
+    {
+        my $visitor = Data::Visitor::Callback->new(
+            plain_value => sub {
+                return unless defined $_;
+                $self->substitute($_);
+            }
+        );
+        $visitor->visit( $self->config );
+
+    }
+
+    return $self->config;
 }
 sub old_load {
     my $self = shift;
@@ -481,15 +516,6 @@ sub path_to {
     else {
         return Path::Class::File->new( $path_to, @path );
     }
-}
-
-sub _load {
-    my $self = shift;
-    my $cfg = shift;
-
-    my ($file, $hash) = %$cfg;
-
-    $self->{_config} = Hash::Merge::Simple->merge($self->_config, $hash);
 }
 
 ## From ::Loader:
@@ -622,25 +648,14 @@ sub found {
     my $self = shift;
     die if @_;
     return unless $self->has_source;
-    return ( map { $_->[1]{file} } @{ $self->source->sources } );
+    return $self->files_loaded;
 }
 around found => sub {
     my $inner = shift;
     my $self = shift;
-
-    $self->read unless $self->{_found};
-
+    $self->load_config unless $self->has_source;
     return $inner->( $self, @_ );
 };
-sub _load_files {
-    my $self = shift;
-    my $files = shift;
-    return Config::Any->load_files({
-        files => $files,
-        use_ext => 1,
-        driver_args => $self->driver,
-    });
-}
 
 
 =head1 SEE ALSO

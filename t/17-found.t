@@ -33,6 +33,7 @@ sub has_Config_General {
 
     ok( $config->get );
     cmp_deeply( $config->get, {} );
+    note explain $config->found;
     ok( !$config->found );
 }
 
@@ -44,4 +45,3 @@ sub has_Config_General {
     ok( keys %{ $config->get } );
     cmp_deeply( [ $config->found ], bag( 't/assets/some_random_file.pl' ) );
 }
-
