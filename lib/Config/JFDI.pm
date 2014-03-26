@@ -132,7 +132,7 @@ sub _build_default {
 
 has path_to => qw/ reader _path_to lazy_build 1 isa Str /,
    builder => sub { $_[0]->config->{home} ||
-                   !$_[0]->source->path_is_file && $_[0]->source->path ||
+                   !$_[0]->path_is_file && $_[0]->path ||
                     "."
                 },
 ;
@@ -373,7 +373,7 @@ sub open {
 
 sub get {
     my $self = shift;
-    return = $self->config;
+    return $self->config;
     # TODO Expand to allow dotted key access (?)
 }
 
