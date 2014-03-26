@@ -3,9 +3,9 @@ use strict;
 use warnings;
 use Test::Most;
 
-use Config::JFDI::Source::Loader;
+use Config::JFDI;
 
-sub file_extension ($) { Config::JFDI::Source::Loader::file_extension shift }
+sub file_extension ($) { Config::JFDI::file_extension shift }
 
 is( file_extension 'test.conf', 'conf' );
 is( file_extension '...', undef );

@@ -82,7 +82,6 @@ use Any::Moose;
 use lib '../Config-Loader/lib';
 use Config::Loader;
 
-use Config::JFDI::Source::Loader;
 use Config::JFDI::Carp;
 
 use Path::Class;
@@ -206,7 +205,7 @@ sub BUILD {
         $self->{path} = $given->{file};
 
         if ( exists $given->{local_suffix} ) {
-            warn "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead"
+            carp "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead"
         }
 
     }
@@ -217,9 +216,6 @@ sub BUILD {
 
     $self->{local_suffix} = $given->{config_local_suffix}
         if $given->{config_local_suffix} and not exists $given->{local_suffix};
-
-    carp "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead" if
-        exists $given->{local_suffix} && exists $given->{file};
 
     for (qw/substitute substitutes substitutions substitution/) {
         if ($given->{$_}) {
@@ -647,13 +643,12 @@ sub _find_files { # Doesn't really find files...hurm...
 sub found {
     my $self = shift;
     die if @_;
-    return unless $self->has_source;
     return $self->files_loaded;
 }
 around found => sub {
     my $inner = shift;
     my $self = shift;
-    $self->load_config unless $self->has_source;
+    $self->load unless $self->has_source;
     return $inner->( $self, @_ );
 };
 
