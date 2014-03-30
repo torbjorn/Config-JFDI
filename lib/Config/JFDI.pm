@@ -80,7 +80,7 @@ If you *do* want the original behavior, simply pass in the file parameter as the
 use Any::Moose;
 
 use lib '../Config-Loader/lib';
-use Config::Loader;
+use Config::Loader '+Config::JFDI::CLSource';
 
 use Config::JFDI::Carp;
 
@@ -104,7 +104,7 @@ has source => (
         my $self = shift;
 
         return Config::Loader->new_source
-            ( "Files",
+            ( "+Config::JFDI::CLSource",
               default => $self->default,
               files => [ $self->_find_files ],
               load_args => {
