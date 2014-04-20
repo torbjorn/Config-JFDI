@@ -121,22 +121,6 @@ has path_to => qw/ reader _path_to is lazy  /,
 
 has _config => qw/ is rw  /;
 
-## From ::Loader:
-# has name => qw/ is ro required 0  /;
-# has path_is_file => qw/ is ro default 0 /;
-# has path => qw/ is ro default . /;
-# has no_env => qw/ is ro required 1 /, default => 0;
-# has no_local => qw/ is ro required 1 /, default => 0;
-# has local_suffix => qw/ is lazy required 1 default local /;
-# has env_lookup => qw/ is ro /, default => sub { [] };
-# has _found => qw/ is rw  /;
-# has driver => qw/ is lazy /,
-#     builder => sub { {} };
-# has default => (
-#    is => 'ro',
-#    default => sub { {} },
-# );
-
 =head2 $config = Config::JFDI->new(...)
 
 You can configure the $config object by passing the following to new:
@@ -187,7 +171,7 @@ sub BUILD {
 
     my $source_builder = sub {
 
-        my @params = qw/name path file path_is_file local_suffix
+        my @params = qw/name path file path_is_file local_suffix config_local_suffix
                         no_env no_local env_lookup default/;
         my %source_args = map { $_, $args->{$_} } grep exists $args->{$_}, @params;
 
@@ -199,35 +183,6 @@ sub BUILD {
 
     $self->{package} = $args->{name} if defined $args->{name} &&
         !defined $self->{package} && ! ref $args->{name};
-
-    # if (defined( my $name = $self->name )) {
-    #     if (ref $name eq "SCALAR") {
-    #         $name = $$name;
-    #     }
-    #     else {
-    #         $name =~ s/::/_/g;
-    #         $name = lc $name;
-    #     }
-    #     $self->{name} = $name;
-    # }
-
-    # if ($args->{file}) {
-
-    #     $self->{path_is_file} = 1;
-    #     $self->{path} = $args->{file};
-
-    #     if ( exists $args->{local_suffix} ) {
-    #         carp "Warning, 'local_suffix' will be ignored if 'file' is args, use 'path' instead"
-    #     }
-
-    # }
-
-    # if (defined $self->env_lookup) {
-    #     $self->{env_lookup} = [ $self->env_lookup ] unless ref $self->env_lookup eq "ARRAY";
-    # }
-
-    $self->{local_suffix} = $args->{config_local_suffix}
-        if $args->{config_local_suffix} and not exists $args->{local_suffix};
 
     ($self->{substitution}) = grep $_, @{$args}{qw/substitute substitutes substitutions substitution/};
 

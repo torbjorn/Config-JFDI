@@ -175,8 +175,6 @@ around BUILDARGS => sub {
     $args->{local_suffix} = $args->{config_local_suffix}
         if $args->{config_local_suffix} and not exists $args->{local_suffix};
 
-    ($args->{substitution}) = grep $_, @{$args}{qw/substitute substitutes substitutions substitution/};
-
     return $args;
 
 };
