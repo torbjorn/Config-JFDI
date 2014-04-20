@@ -77,12 +77,12 @@ If you *do* want the original behavior, simply pass in the file parameter as the
 
 =cut
 
-use Any::Moose;
-
-use lib '../Config-Loader/lib';
-use Config::Loader '+Config::JFDI::CLSource';
+# use Any::Moose;
+use Moo;
+use namespace::clean;
 
 use Config::JFDI::Carp;
+use Config::JFDI::CLSource;
 
 use Path::Class;
 use Config::Any;
@@ -91,63 +91,51 @@ use Sub::Install;
 use Data::Visitor::Callback;
 use Clone qw//;
 
-has package => qw/ is ro isa Str /;
+has package => qw/ is ro  /;
 
 has source => (
-    is => 'ro',
-    lazy_build => 1,
+    is => 'lazy',
     clearer => 'clear_source',
     predicate => 'has_source',
-    handles => [qw/load_config sources files_loaded/],
-    builder => sub {
-
-        my $self = shift;
-
-        return Config::Loader->new_source
-            ( "+Config::JFDI::CLSource",
-              default => $self->default,
-              files => [ $self->_find_files ],
-              load_args => {
-                  use_ext => 1,
-                  driver_args => $self->driver,
-              }
-          );
-
-      },
+    handles => [qw/default load_config/],
+    builder => sub { $_[0]->source_builder->() },
+);
+has source_builder => (
+    is => 'ro'
 );
 
 has load_once => qw/ is ro required 1 /, default => 1;
 
-has substitution => qw/ reader _substitution lazy_build 1 isa HashRef /,
+has substitution => qw/ reader _substitution is ro  /,
     builder => sub {
         return {};
     }
 ;
 
-has path_to => qw/ reader _path_to lazy_build 1 isa Str /,
+has path_to => qw/ reader _path_to is lazy  /,
    builder => sub { $_[0]->config->{home} ||
-                   !$_[0]->path_is_file && $_[0]->path ||
+                   !$_[0]->source->path_is_file && $_[0]->source->path ||
                     "."
                 }
 ;
 
-has _config => qw/ is rw isa HashRef /;
+has _config => qw/ is rw  /;
 
 ## From ::Loader:
-has name => qw/ is ro required 0 isa Str|ScalarRef /;
-has path_is_file => qw/ is ro default 0 /;
-has path => qw/ is ro default . /;
-has no_env => qw/ is ro required 1 /, default => 0;
-has no_local => qw/ is ro required 1 /, default => 0;
-has local_suffix => qw/ is ro required 1 lazy 1 default local /;
-has env_lookup => qw/ is ro /, default => sub { [] };
-has _found => qw/ is rw isa ArrayRef /;
-has driver => qw/ is ro lazy_build 1 /,
-    builder => sub { {} };
-has default => (
-   is => 'ro',
-   default => sub { {} },
-);
+# has name => qw/ is ro required 0  /;
+# has path_is_file => qw/ is ro default 0 /;
+# has path => qw/ is ro default . /;
+# has no_env => qw/ is ro required 1 /, default => 0;
+# has no_local => qw/ is ro required 1 /, default => 0;
+# has local_suffix => qw/ is lazy required 1 default local /;
+# has env_lookup => qw/ is ro /, default => sub { [] };
+# has _found => qw/ is rw  /;
+# has driver => qw/ is lazy /,
+#     builder => sub { {} };
+# has default => (
+#    is => 'ro',
+#    default => sub { {} },
+# );
 
 =head2 $config = Config::JFDI->new(...)
 
@@ -195,43 +183,55 @@ Returns a new Config::JFDI object
 
 sub BUILD {
     my $self = shift;
-    my $given = shift;
+    my $args = shift;
 
-    $self->{package} = $given->{name} if defined $given->{name} &&
-        !defined $self->{package} && ! ref $given->{name};
+    my $source_builder = sub {
 
-    if (defined( my $name = $self->name )) {
-        if (ref $name eq "SCALAR") {
-            $name = $$name;
-        }
-        else {
-            $name =~ s/::/_/g;
-            $name = lc $name;
-        }
-        $self->{name} = $name;
-    }
+        my @params = qw/name path file path_is_file local_suffix
+                        no_env no_local env_lookup default/;
+        my %source_args = map { $_, $args->{$_} } grep exists $args->{$_}, @params;
 
-    if ($given->{file}) {
+        return Config::JFDI::CLSource->new(%source_args);
 
-        $self->{path_is_file} = 1;
-        $self->{path} = $given->{file};
+    };
 
-        if ( exists $given->{local_suffix} ) {
-            carp "Warning, 'local_suffix' will be ignored if 'file' is given, use 'path' instead"
-        }
+    $self->{source_builder} = $source_builder;
 
-    }
+    $self->{package} = $args->{name} if defined $args->{name} &&
+        !defined $self->{package} && ! ref $args->{name};
 
-    if (defined $self->env_lookup) {
-        $self->{env_lookup} = [ $self->env_lookup ] unless ref $self->env_lookup eq "ARRAY";
-    }
+    # if (defined( my $name = $self->name )) {
+    #     if (ref $name eq "SCALAR") {
+    #         $name = $$name;
+    #     }
+    #     else {
+    #         $name =~ s/::/_/g;
+    #         $name = lc $name;
+    #     }
+    #     $self->{name} = $name;
+    # }
 
-    $self->{local_suffix} = $given->{config_local_suffix}
-        if $given->{config_local_suffix} and not exists $given->{local_suffix};
+    # if ($args->{file}) {
 
-    ($self->{substitution}) = grep $_, @{$given}{qw/substitute substitutes substitutions substitution/};
+    #     $self->{path_is_file} = 1;
+    #     $self->{path} = $args->{file};
 
-    if (my $package = $given->{install_accessor}) {
+    #     if ( exists $args->{local_suffix} ) {
+    #         carp "Warning, 'local_suffix' will be ignored if 'file' is args, use 'path' instead"
+    #     }
+
+    # }
+
+    # if (defined $self->env_lookup) {
+    #     $self->{env_lookup} = [ $self->env_lookup ] unless ref $self->env_lookup eq "ARRAY";
+    # }
+
+    $self->{local_suffix} = $args->{config_local_suffix}
+        if $args->{config_local_suffix} and not exists $args->{local_suffix};
+
+    ($self->{substitution}) = grep $_, @{$args}{qw/substitute substitutes substitutions substitution/};
+
+    if (my $package = $args->{install_accessor}) {
         $package = $self->package if $package eq 1;
         Sub::Install::install_sub({
             code => sub {
@@ -518,7 +518,10 @@ sub _find_files { # Doesn't really find files...hurm...
 sub found {
     my $self = shift;
     die if @_;
-    return $self->files_loaded;
+    return unless $self->has_source;
+    return ( map { @{$_->files_loaded} }
+             grep { $_->can("files_loaded") }
+             @{ $self->source->source_objects } );
 }
 around found => sub {
     my $inner = shift;
@@ -526,7 +529,6 @@ around found => sub {
     $self->load unless $self->has_source;
     return $inner->( $self, @_ );
 };
-
 
 =head1 SEE ALSO
 

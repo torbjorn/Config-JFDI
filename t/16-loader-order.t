@@ -8,6 +8,8 @@ plan qw/no_plan/;
 
 use Config::JFDI;
 
+$ENV{CONFIG_LOADER_SOURCE_FILE_MANY_FILES_ALLOW} = 1;
+
 my $config = Config::JFDI->new(qw{ name xyzzy path t/assets/order });
 
 ok($config->get);
