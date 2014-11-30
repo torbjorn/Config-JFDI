@@ -12,11 +12,13 @@ use Config::JFDI::Carp;
 extends "Config::Loader::Source::Merged";
 
 has name => qw/ is ro required 0 /;
+
 has path_is_file => qw/ is ro default 0 /;
 has path => qw/ is ro default . /;
 has no_env => qw/ is ro /, default => 0;
 has no_local => qw/ is ro /, default => 0;
 has local_suffix => qw/ is ro required 1 default local /;
+
 has env_lookup => (
    is => 'ro',
    ## puts it in an array ref if receives a scalar
@@ -36,6 +38,43 @@ has '+sources' => (
     lazy => 1,
     builder => \&_build_sources,
 );
+has env_source => (
+    is => 'lazy',
+    builder => sub {
+        my $self = shift;
+
+        return {} if $self->source_args->{no_env};
+
+        ## arrayify env_lookup
+        my @env_search = ref $self->source_args->{env_lookup} eq "ARRAY"
+            && $self->source_args->{env_lookup}
+                || [$self->source_args->{env_lookup}];
+
+        my ($prefix) = grep defined, $self->name,
+            @env_search;
+
+        $prefix = uc $prefix;
+
+        ## fetch path and suffix and set up a hashref with those
+        my $c = Config::Loader->new_source( 'ENV', {
+            env_prefix => $prefix,
+            env_search => [qw/config config_local_suffix/],
+        })->load_config;
+# use Devel::Dwarn; Dwarn $c;
+        my ($env_path,$env_suffix) = @{$c}{ qw/config config_local_suffix/ };
+
+        return {
+            path => $env_path,
+            suffix => $env_suffix,
+        };
+
+    }
+);
+has source_args => (
+    is => "ro", default => sub {{}}
+);
+
+has file => qw/is ro/;
 
 sub substitute {
     my $self = shift;
@@ -110,34 +149,28 @@ sub _build_sources {
 
     my $self = shift;
 
-    my $path = $self->_env_lookup('CONFIG') unless $self->no_env;
-    $path ||= $self->path;
+    my $path = $self->env_source->{path} || $self->path;
+    my $path_is_file = $self->path_is_file;
+    my $no_local = $self->source_args->{no_local};
 
-    my @sources;
+    if ($self->source_args->{file}) {
 
-    if ( $self->path_is_file ) {
-        return [] unless -r $path;
-        @sources = ( [File => { file => $path }] );
-    }
-    else {
-
-        if (-d $path) {
-            $path = catfile( $path, $self->name );
-        }
-        @sources = ( [File => { file => $path }] );
-
-        if ( not $self->no_local ) {
-
-            my $local_suffix = $self->_get_local_suffix;
-            push @sources, [
-                File => { file => _local_suffixed_filepath($path,$local_suffix) }
-            ];
-
-        }
+        $path_is_file = 1;
+        $path = $self->source_args->{file};
+        $no_local = 1;
 
     }
 
-    return \@sources;
+    if (-d $path) {
+        $path = catfile( $path, $self->name );
+    }
+
+    return [[ 'FileWithLocal' => {
+        file => $path,
+        no_local => $no_local,
+        exists $self->source_args->{local_suffix} ?
+            (local_suffix => $self->source_args->{local_suffix}) : (),
+    }]];
 
 }
 
@@ -174,6 +207,11 @@ around BUILDARGS => sub {
 
     $args->{local_suffix} = $args->{config_local_suffix}
         if $args->{config_local_suffix} and not exists $args->{local_suffix};
+
+
+    my @params = qw/name local_suffix no_local no_env env_lookup file/;
+    my %source_args = map { $_, $args->{$_} } grep exists $args->{$_}, @params;
+    $args->{source_args} = \%source_args;
 
     return $args;
 
